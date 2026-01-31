@@ -28,7 +28,7 @@ def test_message_flow():
     url = "http://localhost:8000/api/message"
     
     # Get API key from env, matching app config
-    api_key = os.getenv("API_KEY", "default-api-key")
+    api_key = os.getenv("X_API_KEY", "default-api-key")
     
     headers = {
         "x-api-key": api_key,

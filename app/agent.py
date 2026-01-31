@@ -5,7 +5,10 @@ import logging
 from typing import Optional
 
 from openai import OpenAI
-from google import genai
+try:
+    from google import genai
+except ImportError:
+    genai = None
 
 from app.config import config
 from app.models import Message
@@ -62,7 +65,7 @@ Respond ONLY with your message as Shanti. No explanations."""
                 logger.info("OpenAI client initialized successfully")
             except Exception as e:
                 logger.warning(f"Failed to initialize OpenAI: {e}. Using fallback.")
-        elif self.llm_provider == "gemini" and config.GOOGLE_API_KEY:
+        elif self.llm_provider == "gemini" and config.GOOGLE_API_KEY and genai is not None:
             try:
                 self.gemini_client = genai.Client(api_key=config.GOOGLE_API_KEY)
                 logger.info("Gemini client initialized successfully")

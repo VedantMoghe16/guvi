@@ -94,7 +94,7 @@ docker run -p 8000:8000 --env-file .env scam-honeypot
 
 | Variable | Description | Required |
 |----------|-------------|----------|
-| `X_API_KEY` | API authentication key | Yes |
+| `x-api-key` | API authentication key | Yes |
 | `LLM_PROVIDER` | `openai` or `gemini` | Yes |
 | `OPENAI_API_KEY` | OpenAI API key | If using OpenAI |
 | `GOOGLE_API_KEY` | Google API key | If using Gemini |

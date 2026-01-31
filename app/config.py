@@ -10,7 +10,7 @@ class Config:
     """Application configuration loaded from environment variables."""
     
     # API Authentication
-    X_API_KEY: str = os.getenv("X_API_KEY", "default-api-key")
+    x_api_key: str = os.getenv("x_api_key") or os.getenv("x-api-key", "default-api-key")
     
     # LLM Provider Configuration
     LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "openai")  # openai or gemini

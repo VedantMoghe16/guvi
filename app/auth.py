@@ -24,7 +24,7 @@ async def verify_api_key(x_api_key: str = Header(..., alias="x-api-key")) -> str
             detail="Missing API key"
         )
     
-    if x_api_key != config.X_API_KEY:
+    if x_api_key != config.x_api_key:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid API key"

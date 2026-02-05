@@ -12,7 +12,7 @@ from app.models import MessageRequest, MessageResponse, Message
 from app.scam_detector import scam_detector
 from app.session_manager import session_manager
 from app.agent import honeypot_agent
-from app.intelligence import intelligence_extractor
+from app.intelligence import intelligence_extractor, llm_intel_extractor
 from app.callback import send_final_result
 
 # Configure logging
@@ -191,6 +191,26 @@ async def handle_message(
                 timestamp=current_message.timestamp
             )
             all_messages.append(agent_msg)
+            
+            # Use LLM to extract additional intel that regex missed
+            try:
+                llm_intel = await llm_intel_extractor.extract_with_llm(all_messages)
+                if llm_intel:
+                    logger.info(f"LLM extracted additional intel: {llm_intel}")
+                    # Merge LLM findings into regex findings
+                    intel = llm_intel_extractor.merge_with_regex(intel, llm_intel)
+                    # Update session with enhanced intel
+                    session_manager.update_intel(
+                        session_id,
+                        phone_numbers=intel.phoneNumbers,
+                        upi_ids=intel.upiIds,
+                        bank_accounts=intel.bankAccounts,
+                        phishing_links=intel.phishingLinks,
+                    )
+                    # Refresh session with updated intel
+                    session = session_manager.get_session(session_id)
+            except Exception as e:
+                logger.warning(f"LLM intel extraction failed: {e}")
             
             # Send callback in background to not block response
             background_tasks.add_task(

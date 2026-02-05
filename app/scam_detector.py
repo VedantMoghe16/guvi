@@ -192,7 +192,7 @@ class ScamDetector:
         total_confidence = min(total_confidence, 1.0)
         
         # Determine if it's a scam based on confidence threshold
-        is_scam = total_confidence >= 0.5
+        is_scam = total_confidence >= 0.6
         
         return ScamDetectionResult(
             is_scam=is_scam,

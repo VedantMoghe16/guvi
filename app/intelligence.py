@@ -1,9 +1,21 @@
 """Intelligence extraction from scam conversations."""
 
 import re
+import json
+import logging
 from dataclasses import dataclass, field
+from typing import Optional
+
+from openai import OpenAI
+try:
+    from google import genai
+except ImportError:
+    genai = None
 
 from app.models import Message, ExtractedIntelligence
+from app.config import config
+
+logger = logging.getLogger(__name__)
 
 
 class IntelligenceExtractor:
@@ -252,3 +264,148 @@ def _extract_with_whitelist(messages: list[Message]) -> ExtractedIntelligence:
     result = _original_extract(messages)
     return _apply_whitelist(result)
 intelligence_extractor.extract = _extract_with_whitelist
+
+
+class LLMIntelExtractor:
+    """
+    LLM-powered intelligence extractor for catching what regex misses.
+    Uses the LLM to analyze conversation and extract all actionable intel.
+    """
+    
+    EXTRACTION_PROMPT = """You are an intelligence analyst. Analyze this scam conversation and extract ALL actionable information the scammer revealed.
+
+CONVERSATION:
+{conversation}
+
+Extract the following information that the SCAMMER mentioned (not the victim):
+1. Phone numbers (any format: +91-xxx, with spaces, etc.)
+2. Bank account numbers (any length)
+3. UPI IDs (like xxx@upi, xxx@paytm, etc.)
+4. Email addresses
+5. Names or designations the scammer claimed
+6. Bank names or branch names mentioned
+7. Any URLs or links
+
+Return ONLY a JSON object in this exact format:
+{{
+    "phoneNumbers": ["list of phone numbers found"],
+    "bankAccounts": ["list of account numbers found"],
+    "upiIds": ["list of UPI IDs found"],
+    "emails": ["list of emails found"],
+    "names": ["names the scammer claimed"],
+    "bankNames": ["bank names mentioned"],
+    "links": ["any URLs found"]
+}}
+
+IMPORTANT: 
+- Extract ONLY what the scammer revealed, not what the victim said
+- Include ALL variations (e.g., if they said "98765 43210", include it as "9876543210")
+- If nothing found for a category, use empty list []
+- Return ONLY the JSON, no explanation"""
+
+    def __init__(self):
+        """Initialize LLM clients."""
+        self.openai_client = None
+        self.gemini_client = None
+        
+        if config.LLM_PROVIDER == "openai" and config.OPENAI_API_KEY:
+            try:
+                self.openai_client = OpenAI(api_key=config.OPENAI_API_KEY)
+            except Exception as e:
+                logger.warning(f"Failed to init OpenAI for intel: {e}")
+        elif config.LLM_PROVIDER == "gemini" and config.GOOGLE_API_KEY and genai:
+            try:
+                self.gemini_client = genai.Client(api_key=config.GOOGLE_API_KEY)
+            except Exception as e:
+                logger.warning(f"Failed to init Gemini for intel: {e}")
+    
+    async def extract_with_llm(self, messages: list[Message]) -> dict:
+        """
+        Use LLM to extract intelligence from conversation.
+        Returns dict with all extracted intel.
+        """
+        if not self.openai_client and not self.gemini_client:
+            logger.info("No LLM available for intel extraction")
+            return {}
+        
+        # Build conversation text (only scammer messages for focus)
+        conversation_text = "\n".join([
+            f"{'SCAMMER' if msg.sender != 'agent' else 'VICTIM'}: {msg.text}"
+            for msg in messages
+        ])
+        
+        prompt = self.EXTRACTION_PROMPT.format(conversation=conversation_text)
+        
+        try:
+            if self.openai_client:
+                response = self.openai_client.chat.completions.create(
+                    model="gpt-3.5-turbo",
+                    messages=[{"role": "user", "content": prompt}],
+                    max_tokens=500,
+                    temperature=0.1,  # Low temp for accuracy
+                )
+                result_text = response.choices[0].message.content
+            elif self.gemini_client:
+                response = self.gemini_client.models.generate_content(
+                    model='gemini-1.5-flash',
+                    contents=prompt
+                )
+                result_text = response.text
+            else:
+                return {}
+            
+            # Parse JSON response
+            # Clean up potential markdown code blocks
+            result_text = result_text.strip()
+            if result_text.startswith("```"):
+                result_text = result_text.split("```")[1]
+                if result_text.startswith("json"):
+                    result_text = result_text[4:]
+            
+            return json.loads(result_text)
+            
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse LLM intel response: {e}")
+            return {}
+        except Exception as e:
+            logger.error(f"LLM intel extraction failed: {e}")
+            return {}
+    
+    def merge_with_regex(
+        self, 
+        regex_intel: ExtractedIntelligence, 
+        llm_intel: dict
+    ) -> ExtractedIntelligence:
+        """Merge LLM-extracted intel with regex-extracted intel."""
+        # Add LLM findings to existing regex findings
+        if llm_intel.get("phoneNumbers"):
+            for phone in llm_intel["phoneNumbers"]:
+                clean_phone = re.sub(r"[\s-]", "", phone)
+                if clean_phone not in " ".join(regex_intel.phoneNumbers):
+                    regex_intel.phoneNumbers.append(phone)
+        
+        if llm_intel.get("bankAccounts"):
+            for acc in llm_intel["bankAccounts"]:
+                if acc not in regex_intel.bankAccounts:
+                    regex_intel.bankAccounts.append(acc)
+        
+        if llm_intel.get("upiIds"):
+            for upi in llm_intel["upiIds"]:
+                if upi.lower() not in [u.lower() for u in regex_intel.upiIds]:
+                    regex_intel.upiIds.append(upi)
+        
+        if llm_intel.get("emails"):
+            for email in llm_intel["emails"]:
+                if email.lower() not in [u.lower() for u in regex_intel.upiIds]:
+                    regex_intel.upiIds.append(email)
+        
+        if llm_intel.get("links"):
+            for link in llm_intel["links"]:
+                if link not in regex_intel.phishingLinks:
+                    regex_intel.phishingLinks.append(link)
+        
+        return regex_intel
+
+
+# Global LLM extractor instance
+llm_intel_extractor = LLMIntelExtractor()

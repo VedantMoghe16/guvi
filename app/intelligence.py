@@ -137,5 +137,58 @@ class IntelligenceExtractor:
         }
 
 
+class IntelWhitelist:
+    """Whitelist for filtering out agent's own details."""
+    
+    # Fake persona details to ignore
+    IGNORED_NUMBERS = ["9999999999", "8888888888", "1234567890"]
+    IGNORED_UPI = ["shanti@upi", "test@upi"]
+    IGNORED_ACCOUNTS = ["123456789", "000000000"]
+    
+    @classmethod
+    def is_whitelisted(cls, value: str, intel_type: str) -> bool:
+        """Check if a value is in the whitelist."""
+        value = value.lower().strip()
+        
+        if intel_type == "phone_numbers":
+            clean_num = re.sub(r"[\s+-]", "", value)
+            return any(ignored in clean_num for ignored in cls.IGNORED_NUMBERS)
+            
+        elif intel_type == "upi_ids":
+            return value in cls.IGNORED_UPI
+            
+        elif intel_type == "bank_accounts":
+            clean_acc = re.sub(r"[\s-]", "", value)
+            return any(ignored in clean_acc for ignored in cls.IGNORED_ACCOUNTS)
+            
+        return False
+
+
+# Modify IntelligenceExtractor to use whitelist
+# Note: In a real app, we'd inject this dependency.
+# For now, we perform post-filtering in the extract method.
+def _apply_whitelist(intel: ExtractedIntelligence) -> ExtractedIntelligence:
+    """Filter extracted intelligence using whitelist."""
+    intel.phoneNumbers = [
+        n for n in intel.phoneNumbers 
+        if not IntelWhitelist.is_whitelisted(n, "phone_numbers")
+    ]
+    intel.upiIds = [
+        u for u in intel.upiIds 
+        if not IntelWhitelist.is_whitelisted(u, "upi_ids")
+    ]
+    intel.bankAccounts = [
+        b for b in intel.bankAccounts 
+        if not IntelWhitelist.is_whitelisted(b, "bank_accounts")
+    ]
+    return intel
+
+
 # Global instance
 intelligence_extractor = IntelligenceExtractor()
+# Monkey-patch extract method to apply whitelist automatically
+_original_extract = intelligence_extractor.extract
+def _extract_with_whitelist(messages: list[Message]) -> ExtractedIntelligence:
+    result = _original_extract(messages)
+    return _apply_whitelist(result)
+intelligence_extractor.extract = _extract_with_whitelist

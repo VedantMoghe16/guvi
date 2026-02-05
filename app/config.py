@@ -23,6 +23,10 @@ class Config:
         "https://hackathon.guvi.in/api/updateHoneyPotFinalResult"
     )
     
+    # Advanced Scam Orchestrator Config
+    LLM_SCAM_ANALYSIS_ENABLED: bool = os.getenv("LLM_SCAM_ANALYSIS_ENABLED", "true").lower() == "true"
+    LLM_CONFIDENCE_THRESHOLD: float = float(os.getenv("LLM_CONFIDENCE_THRESHOLD", "0.2"))
+    
     # Session Configuration
     MIN_MESSAGES_FOR_CALLBACK: int = int(os.getenv("MIN_MESSAGES_FOR_CALLBACK", "5"))
     

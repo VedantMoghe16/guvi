@@ -151,13 +151,38 @@ async def handle_message(
         # Build full conversation for intelligence extraction
         all_messages = list(history) + [current_message]
         
-        # Check if we should send GUVI callback
+        # Extract intelligence from conversation (do this every message)
+        intel = intelligence_extractor.extract(all_messages)
+        
+        # Update session with extracted intel
+        session_manager.update_intel(
+            session_id,
+            phone_numbers=intel.phoneNumbers,
+            upi_ids=intel.upiIds,
+            bank_accounts=intel.bankAccounts,
+            phishing_links=intel.phishingLinks,
+        )
+        
+        # Get updated session to check intel progress
+        session = session_manager.get_session(session_id)
+        logger.info(
+            f"Session {session_id}: messages={session.message_count}, "
+            f"intel_count={session.total_intel_count}, "
+            f"phase={session.engagement_phase}"
+        )
+        
+        # Check if we should send GUVI callback (requires intel too)
         if session_manager.should_send_callback(
             session_id, 
-            config.MIN_MESSAGES_FOR_CALLBACK
+            min_messages=config.MIN_MESSAGES_FOR_CALLBACK,
+            min_intel=1  # Require at least 1 piece of intel
         ):
-            logger.info(f"Scheduling GUVI callback for session {session_id}")
-            session = session_manager.get_session(session_id)
+            logger.info(
+                f"Scheduling GUVI callback for session {session_id} "
+                f"(intel: phones={len(session.phone_numbers_extracted)}, "
+                f"upi={len(session.upi_ids_extracted)}, "
+                f"accounts={len(session.bank_accounts_extracted)})"
+            )
             
             # Add agent response as a Message for full context
             agent_msg = Message(
@@ -187,7 +212,7 @@ async def get_session_info(
     session_id: str,
     api_key: str = Depends(verify_api_key),
 ):
-    """Get session information (for debugging)."""
+    """Get session information including intel progress."""
     session = session_manager.get_session(session_id)
     return {
         "session_id": session.session_id,
@@ -197,6 +222,16 @@ async def get_session_info(
         "message_count": session.message_count,
         "trust_level": session.trust_level,
         "callback_sent": session.callback_sent,
+        # Intel tracking fields
+        "engagement_phase": session.engagement_phase,
+        "intel_extracted": {
+            "phone_numbers": session.phone_numbers_extracted,
+            "upi_ids": session.upi_ids_extracted,
+            "bank_accounts": session.bank_accounts_extracted,
+            "phishing_links": session.phishing_links_extracted,
+            "total_count": session.total_intel_count,
+        },
+        "ready_to_finalize": session.should_finalize(),
     }
 
 

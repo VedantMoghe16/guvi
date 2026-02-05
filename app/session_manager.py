@@ -21,6 +21,48 @@ class SessionData:
     created_at: datetime = field(default_factory=datetime.now)
     last_updated: datetime = field(default_factory=datetime.now)
     agent_notes: list[str] = field(default_factory=list)
+    
+    # Intelligence extraction tracking (NEW)
+    phone_numbers_extracted: list[str] = field(default_factory=list)
+    upi_ids_extracted: list[str] = field(default_factory=list)
+    bank_accounts_extracted: list[str] = field(default_factory=list)
+    phishing_links_extracted: list[str] = field(default_factory=list)
+    emails_extracted: list[str] = field(default_factory=list)
+    
+    # Engagement strategy state (NEW)
+    engagement_phase: str = "initial_contact"
+    ready_to_finalize: bool = False
+    
+    @property
+    def total_intel_count(self) -> int:
+        """Count total intel pieces extracted."""
+        return (
+            len(self.phone_numbers_extracted) +
+            len(self.upi_ids_extracted) +
+            len(self.bank_accounts_extracted) +
+            len(self.phishing_links_extracted) +
+            len(self.emails_extracted)
+        )
+    
+    def should_finalize(self, min_messages: int = 5, min_intel: int = 1) -> bool:
+        """
+        Determine if we should finalize the session.
+        
+        Returns True only if:
+        1. Scam is detected AND
+        2. We have exchanged enough messages AND
+        3. We have extracted minimum intel
+        """
+        if not self.scam_detected:
+            return False
+        
+        if self.message_count < min_messages:
+            return False  # Keep engaging
+        
+        if self.total_intel_count < min_intel:
+            return False  # No intel yet, keep trying
+        
+        return True
 
 
 class SessionManager:
@@ -102,19 +144,80 @@ class SessionManager:
             session.last_updated = datetime.now()
             return session
     
+    def update_intel(
+        self,
+        session_id: str,
+        phone_numbers: list[str] = None,
+        upi_ids: list[str] = None,
+        bank_accounts: list[str] = None,
+        phishing_links: list[str] = None,
+        emails: list[str] = None,
+    ) -> SessionData:
+        """
+        Update extracted intelligence for a session.
+        
+        Deduplicates and appends new intel to existing.
+        """
+        with self._lock:
+            session = self.get_session(session_id)
+            
+            if phone_numbers:
+                for num in phone_numbers:
+                    if num not in session.phone_numbers_extracted:
+                        session.phone_numbers_extracted.append(num)
+            
+            if upi_ids:
+                for upi in upi_ids:
+                    if upi not in session.upi_ids_extracted:
+                        session.upi_ids_extracted.append(upi)
+            
+            if bank_accounts:
+                for acc in bank_accounts:
+                    if acc not in session.bank_accounts_extracted:
+                        session.bank_accounts_extracted.append(acc)
+            
+            if phishing_links:
+                for link in phishing_links:
+                    if link not in session.phishing_links_extracted:
+                        session.phishing_links_extracted.append(link)
+            
+            if emails:
+                for email in emails:
+                    if email not in session.emails_extracted:
+                        session.emails_extracted.append(email)
+            
+            # Update engagement phase based on intel progress
+            if session.total_intel_count > 0:
+                if session.engagement_phase in ["initial_contact", "building_trust"]:
+                    session.engagement_phase = "confirming_intel"
+            
+            session.last_updated = datetime.now()
+            return session
+    
+    def update_engagement_phase(self, session_id: str, phase: str) -> None:
+        """Update the engagement phase for a session."""
+        with self._lock:
+            session = self.get_session(session_id)
+            session.engagement_phase = phase
+            session.last_updated = datetime.now()
+    
     def mark_callback_sent(self, session_id: str) -> None:
         """Mark that GUVI callback was sent for this session."""
         with self._lock:
             if session_id in self._sessions:
                 self._sessions[session_id].callback_sent = True
     
-    def should_send_callback(self, session_id: str, min_messages: int = 5) -> bool:
+    def should_send_callback(self, session_id: str, min_messages: int = 5, min_intel: int = 1) -> bool:
         """
         Check if we should send the GUVI callback.
+        
+        IMPORTANT: Requires BOTH minimum messages AND minimum intel.
+        This ensures we extract useful info before finalizing.
         
         Args:
             session_id: Session to check
             min_messages: Minimum messages before callback
+            min_intel: Minimum intel pieces before callback
             
         Returns:
             True if callback should be sent
@@ -124,9 +227,9 @@ class SessionManager:
             if not session:
                 return False
             
+            # Use the new should_finalize method
             return (
-                session.scam_detected 
-                and session.message_count >= min_messages 
+                session.should_finalize(min_messages, min_intel)
                 and not session.callback_sent
             )
     

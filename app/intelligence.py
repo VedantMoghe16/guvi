@@ -16,7 +16,7 @@ class IntelligenceExtractor:
             r"\b\d{9,18}\b",  # Account numbers
         ],
         "upi_ids": [
-            r"\b[\w.+-]+@(?:upi|paytm|ybl|oksbi|okicici|okaxis|okhdfcbank|apl|ibl|axl|sbi|pnb|kotak)\b",
+            r"\b[\w.+-]+@(?:upi|paytm|ybl|oksbi|okicici|okaxis|okhdfcbank|apl|ibl|axl|sbi|pnb|kotak|fakebank|fraudbank|scambank|scambank|scam)\b",
             r"\b[\w.+-]+@[\w]+bank\b",
         ],
         "phone_numbers": [

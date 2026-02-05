@@ -200,31 +200,26 @@ class IntelligenceExtractor:
 class IntelWhitelist:
     """Whitelist for filtering out agent's own details."""
     
-    # Fake persona details to ignore (EXACT MATCH only)
-    IGNORED_NUMBERS = {"9999999999", "8888888888", "1234567890"}
-    IGNORED_UPI = {"shanti@upi", "test@upi"}
-    IGNORED_ACCOUNTS = {"123456789", "000000000", "9999999999999999"}
+    # Fake persona details to ignore
+    IGNORED_NUMBERS = ["9999999999", "8888888888", "1234567890"]
+    IGNORED_UPI = ["shanti@upi", "test@upi"]
+    IGNORED_ACCOUNTS = ["123456789", "000000000"]
     
     @classmethod
     def is_whitelisted(cls, value: str, intel_type: str) -> bool:
-        """Check if a value EXACTLY matches a whitelisted item."""
+        """Check if a value is in the whitelist."""
         value = value.lower().strip()
         
         if intel_type == "phone_numbers":
-            # Clean and check EXACT match
             clean_num = re.sub(r"[\s+-]", "", value)
-            # Only 10 digits for comparison
-            if len(clean_num) >= 10:
-                clean_num = clean_num[-10:]  # Last 10 digits
-            return clean_num in cls.IGNORED_NUMBERS
+            return any(ignored in clean_num for ignored in cls.IGNORED_NUMBERS)
             
         elif intel_type == "upi_ids":
             return value in cls.IGNORED_UPI
             
         elif intel_type == "bank_accounts":
-            # EXACT match only, not substring
             clean_acc = re.sub(r"[\s-]", "", value)
-            return clean_acc in cls.IGNORED_ACCOUNTS
+            return any(ignored in clean_acc for ignored in cls.IGNORED_ACCOUNTS)
             
         return False
 

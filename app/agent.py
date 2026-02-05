@@ -164,7 +164,7 @@ Your success is measured by how much concrete, reportable information the sender
         history: list[Message],
         session_data: SessionData
     ) -> list[dict]:
-        """Build message list for LLM prompt."""
+        """Build message list for LLM prompt with full context."""
         messages = [{"role": "system", "content": self.SYSTEM_PROMPT}]
         
         # Add trust level guidance
@@ -174,8 +174,25 @@ Your success is measured by how much concrete, reportable information the sender
             "content": f"Current trust level: {session_data.trust_level}/5. {trust_guidance}"
         })
         
-        # Add conversation history
-        for msg in history[-6:]:  # Last 6 messages for context
+        # Add session context summary (PERSISTENT MEMORY)
+        session_summary = self._build_session_summary(session_data)
+        if session_summary:
+            messages.append({
+                "role": "system",
+                "content": f"CONVERSATION CONTEXT (what you know so far):\n{session_summary}"
+            })
+        
+        # Add anti-repetition reminder
+        messages.append({
+            "role": "system",
+            "content": (
+                "IMPORTANT: Do NOT repeat phrases you've already used. "
+                "Vary your language. Check the conversation history and use DIFFERENT words/excuses."
+            )
+        })
+        
+        # Add conversation history (INCREASED from 6 to 15 messages)
+        for msg in history[-15:]:
             role = "assistant" if msg.sender == "user" else "user"
             messages.append({"role": role, "content": msg.text})
         
@@ -195,6 +212,46 @@ Your success is measured by how much concrete, reportable information the sender
             5: "Almost ready to share info but always have one more question or concern.",
         }
         return guidance.get(trust_level, guidance[0])
+    
+    def _build_session_summary(self, session_data: SessionData) -> str:
+        """
+        Build a summary of what we know from this conversation.
+        This provides PERSISTENT MEMORY across the conversation.
+        """
+        summary_parts = []
+        
+        # Basic stats
+        summary_parts.append(f"- Messages exchanged: {session_data.message_count}")
+        
+        # Scam detection status
+        if session_data.scam_detected:
+            summary_parts.append(f"- Scam type detected: {session_data.scam_type}")
+        
+        # Intel already extracted (so agent knows what we have)
+        if session_data.phone_numbers_extracted:
+            summary_parts.append(f"- Phone numbers obtained: {', '.join(session_data.phone_numbers_extracted)}")
+        if session_data.upi_ids_extracted:
+            summary_parts.append(f"- UPI IDs obtained: {', '.join(session_data.upi_ids_extracted)}")
+        if session_data.bank_accounts_extracted:
+            summary_parts.append(f"- Bank accounts obtained: {', '.join(session_data.bank_accounts_extracted)}")
+        
+        # Intel still needed (guide the agent)
+        missing_intel = []
+        if not session_data.phone_numbers_extracted:
+            missing_intel.append("phone number")
+        if not session_data.upi_ids_extracted:
+            missing_intel.append("UPI ID or email")
+        if not session_data.bank_accounts_extracted:
+            missing_intel.append("bank account number")
+        
+        if missing_intel:
+            summary_parts.append(f"- STILL NEED TO EXTRACT: {', '.join(missing_intel)}")
+        
+        # Agent notes (behavioral observations)
+        if session_data.agent_notes:
+            summary_parts.append(f"- Notes: {'; '.join(session_data.agent_notes[-3:])}")
+        
+        return "\n".join(summary_parts) if summary_parts else ""
     
     async def _generate_openai(self, messages: list[dict]) -> str:
         """Generate response using OpenAI."""

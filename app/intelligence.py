@@ -11,21 +11,31 @@ class IntelligenceExtractor:
     
     # Regex patterns for different intelligence types
     PATTERNS = {
+        # Bank accounts - extract FIRST to avoid confusion with phones
         "bank_accounts": [
-            r"\b\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}\b",  # 16-digit card
-            r"\b\d{9,18}\b",  # Account numbers
+            r"\b\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}\b",  # 16-digit card/account
+            r"\b\d{14,18}\b",  # Long account numbers (14-18 digits)
+            r"account\s*(?:number|no\.?|#)?\s*[:\s]?\s*(\d{9,18})",  # "account number: XXXXX"
         ],
+        # UPI IDs
         "upi_ids": [
-            r"\b[\w.+-]+@(?:upi|paytm|ybl|oksbi|okicici|okaxis|okhdfcbank|apl|ibl|axl|sbi|pnb|kotak|fakebank|fraudbank|scambank|scambank|scam)\b",
+            r"\b[\w.+-]+@(?:upi|paytm|ybl|oksbi|okicici|okaxis|okhdfcbank|apl|ibl|axl|sbi|pnb|kotak|fakebank|fraudbank|scambank|scam)\b",
             r"\b[\w.+-]+@[\w]+bank\b",
         ],
+        # Phone numbers - use explicit Indian format
         "phone_numbers": [
-            r"(?:\+91[-\s]?)?[6-9]\d{9}\b",  # Indian mobile
-            r"(?:\+\d{1,3}[-\s]?)?\d{10,12}\b",  # International
+            r"\+91[-\s]?[1-9]\d{9}\b",  # +91-9876543210 or +91 9876543210
+            r"\b(?:91[-\s]?)?[1-9]\d{9}\b",  # 91-9876543210 or just 9876543210
         ],
+        # Phishing links
         "phishing_links": [
             r"https?://[^\s<>\"']+",
             r"(?:bit\.ly|tinyurl\.com|t\.co|goo\.gl|short\.link)[/\w.?=-]*",
+        ],
+        # Emails (NEW)
+        "emails": [
+            r"\b[\w.+-]+@[\w.-]+\.\w{2,}\b",  # standard email
+            r"\b[\w.+-]+@[\w]+\b",  # short format like scammer@fakebank
         ],
     }
     
@@ -59,22 +69,32 @@ class IntelligenceExtractor:
         # Combine all message text
         all_text = " ".join(msg.text for msg in messages)
         
-        # Extract each type
+        # Extract bank accounts FIRST (to exclude from phone matching)
         bank_accounts = self._extract_pattern("bank_accounts", all_text)
-        upi_ids = self._extract_pattern("upi_ids", all_text)
-        phone_numbers = self._extract_pattern("phone_numbers", all_text)
-        phishing_links = self._extract_pattern("phishing_links", all_text)
+        bank_accounts = self._clean_bank_accounts(bank_accounts)
         
-        # Filter out likely false positives
-        phone_numbers = self._filter_phone_numbers(phone_numbers)
+        # Extract phones, then filter out account number fragments
+        phone_numbers = self._extract_pattern("phone_numbers", all_text)
+        phone_numbers = self._filter_phone_numbers(phone_numbers, bank_accounts)
+        
+        # Extract other types
+        upi_ids = self._extract_pattern("upi_ids", all_text)
+        phishing_links = self._extract_pattern("phishing_links", all_text)
+        emails = self._extract_pattern("emails", all_text)
+        
+        # Filter links
         phishing_links = self._filter_links(phishing_links)
+        
+        # Merge emails into UPI if they look like scam contact
+        # (UPIs often look like emails, so combine for reporting)
+        all_contact_ids = list(set(upi_ids + emails))
         
         # Extract suspicious keywords
         keywords = self._extract_keywords(all_text)
         
         return ExtractedIntelligence(
             bankAccounts=list(set(bank_accounts)),
-            upiIds=list(set(upi_ids)),
+            upiIds=list(set(all_contact_ids)),  # Combined UPI + emails
             phoneNumbers=list(set(phone_numbers)),
             phishingLinks=list(set(phishing_links)),
             suspiciousKeywords=list(set(keywords)),
@@ -97,16 +117,56 @@ class IntelligenceExtractor:
                 found.append(keyword)
         return found
     
-    def _filter_phone_numbers(self, numbers: list[str]) -> list[str]:
-        """Filter out unlikely phone numbers."""
+    def _filter_phone_numbers(self, numbers: list[str], bank_accounts: list[str]) -> list[str]:
+        """
+        Filter out unlikely phone numbers and exclude account number fragments.
+        
+        Args:
+            numbers: Raw extracted phone numbers
+            bank_accounts: Already extracted bank accounts (to exclude)
+        """
+        # Create set of account digit sequences for comparison
+        account_digits = set()
+        for acc in bank_accounts:
+            clean_acc = re.sub(r"[\s-]", "", acc)
+            account_digits.add(clean_acc)
+            # Also add substrings that might match as phones
+            if len(clean_acc) >= 10:
+                for i in range(len(clean_acc) - 9):
+                    account_digits.add(clean_acc[i:i+10])
+        
         filtered = []
         for num in numbers:
             # Clean the number
-            clean = re.sub(r"[\s-]", "", num)
-            # Keep only valid length numbers
-            if 10 <= len(clean.replace("+", "")) <= 13:
+            clean = re.sub(r"[\s+-]", "", num)
+            
+            # Skip if this is part of a bank account
+            is_account_fragment = any(
+                clean in acc or acc in clean 
+                for acc in account_digits
+            )
+            if is_account_fragment:
+                continue
+            
+            # Keep only valid Indian mobile numbers (10 digits, starting with 6-9)
+            digits_only = re.sub(r"\D", "", clean)
+            if len(digits_only) == 10 and digits_only[0] in "6789":
                 filtered.append(num)
+            elif len(digits_only) == 12 and digits_only[:2] == "91" and digits_only[2] in "6789":
+                filtered.append(num)
+        
         return filtered
+    
+    def _clean_bank_accounts(self, accounts: list[str]) -> list[str]:
+        """Clean and validate extracted bank account numbers."""
+        cleaned = []
+        for acc in accounts:
+            # Remove spaces and dashes
+            clean = re.sub(r"[\s-]", "", acc)
+            # Keep only if it looks like an account (9+ digits)
+            if len(clean) >= 9 and clean.isdigit():
+                cleaned.append(clean)
+        return cleaned
     
     def _filter_links(self, links: list[str]) -> list[str]:
         """Filter and clean extracted links."""

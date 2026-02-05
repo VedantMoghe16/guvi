@@ -280,7 +280,7 @@ CONVERSATION:
 Extract the following information that the SCAMMER mentioned (not the victim):
 1. Phone numbers (any format: +91-xxx, with spaces, etc.)
 2. Bank account numbers (any length)
-3. UPI IDs (like xxx@upi, xxx@paytm, etc.)
+3. UPI IDs (like xxx@upi, xxx@paytm,xxx@fakebank etc.)
 4. Email addresses
 5. Names or designations the scammer claimed
 6. Bank names or branch names mentioned
